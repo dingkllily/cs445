@@ -1,4 +1,3 @@
-import sys
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QAction,
@@ -14,7 +13,7 @@ from PyQt5.QtWidgets import (
     QComboBox,
     QSlider,
 )
-from PyQt5.QtGui import QIcon, QPixmap
+from PyQt5.QtGui import QIcon
 from PyQt5.QtCore import pyqtSlot, Qt
 from numpy import add
 
@@ -43,10 +42,10 @@ class BallastCutterView(QMainWindow):
         openAction.triggered.connect(self.import_image)
         fileMenu.addAction(openAction)
 
-        saveAction = QAction(QIcon("exit.png"), "Export..", self)
+        saveAction = QAction(QIcon("exit.png"), "Export Labels..", self)
         saveAction.setShortcut("Ctrl+S")
         saveAction.setStatusTip("Save file to disk.")
-        saveAction.triggered.connect(qApp.quit)
+        saveAction.triggered.connect(self.viewModel.export_mask)
         fileMenu.addAction(saveAction)
 
         exitAction = QAction(QIcon("exit.png"), "&Exit", self)
@@ -142,6 +141,12 @@ class BallastCutterView(QMainWindow):
         self.baseline_advanced_combobox.setCurrentIndex(0)
         self.viewModel.gc_marker.adv_ops = str(self.baseline_advanced_combobox.currentText()).lower()
 
+        self.baseline_neighbor_num_combobox = QComboBox()
+        self.baseline_neighbor_num_combobox.addItems(["4", "8"])
+        self.baseline_neighbor_num_combobox.activated[str].connect(self.baselineChangeNeighborNum)
+        self.baseline_neighbor_num_combobox.setCurrentIndex(0)
+        self.viewModel.gc_marker.neighbor_num = 4
+
         self.baseline_iter_label = QLabel()
         self.baseline_iter_label.setText("Number of Iteration(s): 1")
         self.baseline_iter_num_slider = QSlider(Qt.Horizontal)
@@ -153,13 +158,33 @@ class BallastCutterView(QMainWindow):
         self.baseline_iter_num_slider.valueChanged[int].connect(self.baselineChangeIterNum)
 
         runBtn = QPushButton("Run Graph Cut Baseline")
-        runBtn.clicked.connect(self.run_baseline)
+        runBtn.clicked.connect(self.run_algo)
 
         self.dynamicLayout.addWidget(self.fgBtn)
         self.dynamicLayout.addWidget(bgBtn)
+        self.dynamicLayout.addWidget(QLabel("Advanced Configuration:"))
         self.dynamicLayout.addWidget(self.baseline_advanced_combobox)
+        self.dynamicLayout.addWidget(QLabel("Number of adjacent pixels:"))
+        self.dynamicLayout.addWidget(self.baseline_neighbor_num_combobox)
         self.dynamicLayout.addWidget(self.baseline_iter_label)
         self.dynamicLayout.addWidget(self.baseline_iter_num_slider)
+        self.dynamicLayout.addWidget(runBtn)
+
+    def deepGCPanel(self):
+        self.deepgc_thres_label = QLabel()
+        self.deepgc_thres_label.setText("Threshold: 0.80")
+        self.deepgc_thres_slider = QSlider(Qt.Horizontal)
+        self.deepgc_thres_slider.setMinimum(1)
+        self.deepgc_thres_slider.setMaximum(100)
+        self.deepgc_thres_slider.setValue(1)
+        self.deepgc_thres_slider.setTickPosition(QSlider.TicksBelow)
+        self.deepgc_thres_slider.setTickInterval(1)
+        self.deepgc_thres_slider.valueChanged[int].connect(self.deepgcChangeThresh)
+
+        runBtn = QPushButton("Run Deep Grab Cut")
+        runBtn.clicked.connect(self.run_algo)
+        self.dynamicLayout.addWidget(self.deepgc_thres_label)
+        self.dynamicLayout.addWidget(self.deepgc_thres_slider)
         self.dynamicLayout.addWidget(runBtn)
 
     @staticmethod
@@ -181,6 +206,8 @@ class BallastCutterView(QMainWindow):
         func = None
         if "baseline" in self.viewModel.currentAlgo:
             func = self.viewModel.baseline_seed_mouse_down
+        elif "deep" in self.viewModel.currentAlgo:
+            self.viewModel.deep_seed_mouse_down(event, self.seedRes)
         if func:
             self.seedLabel.setPixmap(self.scale_pixmap(func(event, self.seedRes), self.seedRes))
 
@@ -191,6 +218,8 @@ class BallastCutterView(QMainWindow):
             func = self.viewModel.baseline_seed_mouse_drag
         elif "manual" in self.viewModel.currentAlgo:
             func = self.viewModel.manual_seed_mouse_drag
+        elif "deep" in self.viewModel.currentAlgo:
+            func = self.viewModel.deep_seed_mouse_drag
         if func:
             self.seedLabel.setPixmap(self.scale_pixmap(func(event, self.seedRes), self.seedRes))
 
@@ -199,6 +228,8 @@ class BallastCutterView(QMainWindow):
         func = None
         if "manual" in self.viewModel.currentAlgo:
             func = self.viewModel.manual_seed_mouse_release
+        elif "deep" in self.viewModel.currentAlgo:
+            func = self.viewModel.deep_seed_mouse_release
         if func:
             self.seedLabel.setPixmap(self.scale_pixmap(func(event, self.seedRes), self.seedRes))
 
@@ -219,15 +250,22 @@ class BallastCutterView(QMainWindow):
         self.segmentLabel.setPixmap(self.scale_pixmap(segPixmap, self.seedRes))
 
     @pyqtSlot()
-    def run_baseline(self):
-        self.fgBtn.setChecked(True)
-        self.viewModel.baseline_fg_mode()
-        self.segmentLabel.setPixmap(self.scale_pixmap(self.viewModel.run_baseline(), self.seedRes))
+    def run_algo(self):
+        func = None
+        if "baseline" in self.viewModel.currentAlgo:
+            self.fgBtn.setChecked(True)
+            self.viewModel.baseline_fg_mode()
+            func = self.viewModel.run_baseline
+        elif "deep" in self.viewModel.currentAlgo:
+            func = self.viewModel.run_deepgc
+        if func:
+            self.segmentLabel.setPixmap(self.scale_pixmap(func(), self.seedRes))
 
     @pyqtSlot()
     def clear_seeds(self):
-        self.fgBtn.setChecked(True)
-        self.viewModel.baseline_fg_mode()
+        if "baseline" in self.viewModel.currentAlgo:
+            self.fgBtn.setChecked(True)
+            self.viewModel.baseline_fg_mode()
         self.seedLabel.setPixmap(self.scale_pixmap(self.viewModel.clear_seeds(), self.seedRes))
 
     @pyqtSlot()
@@ -250,6 +288,8 @@ class BallastCutterView(QMainWindow):
         self.viewModel.currentAlgo = text.lower()
         if "baseline" in text.lower():
             self.baselinePanel()
+        elif "deep" in text.lower():
+            self.deepGCPanel()
 
     def baselineChangeIterNum(self, value):
         self.baseline_iter_label.setText(f"Number of Iteration(s): {value}")
@@ -257,3 +297,11 @@ class BallastCutterView(QMainWindow):
 
     def baselineChangeAdvOps(self, text):
         self.viewModel.gc_marker.adv_ops = text.lower()
+
+    def baselineChangeNeighborNum(self, text):
+        self.viewModel.gc_marker.neighbor_num = int(text)
+
+    def deepgcChangeThresh(self, value):
+        thresh = 0.8 + 0.2 * (value - 1) / 100.0
+        self.deepgc_thres_label.setText(f"Threshold: {thresh:.02f}")
+        self.viewModel.gc_marker.thres = thresh

@@ -7,7 +7,7 @@ from views import BallastCutterView
 
 def main():
     app = QApplication(sys.argv)
-    window = BallastCutterView()
+    _ = BallastCutterView()
     sys.exit(app.exec_())
 
 

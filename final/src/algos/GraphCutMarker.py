@@ -149,7 +149,6 @@ class GraphCutMarker:
             return np.sum(np.square(self.hsvimage[y1, x1] - self.hsvimage[y2, x2]))
 
         elif "surface gradient" in self.adv_ops:
-
             return np.sum(np.square(self.cmp_img[y1, x1] - self.cmp_img[y2, x2]))
 
     def grad_to_weight(self, gradient, mode=1):
@@ -213,7 +212,6 @@ class GraphCutMarker:
         for index in range(len(self.nodes)):
             if g.get_segment(index) == 1:
                 xy = self.get_xy(index, self.image.shape)
-                # print(xy[1], xy[0])
                 self.segment_overlay[xy[1], xy[0]] = (255, 0, 255)
                 self.mask[xy[1], xy[0]] = (True, True, True)
 

@@ -1,5 +1,3 @@
-import random
-
 import cv2
 import numpy as np
 from collections import defaultdict
@@ -9,6 +7,7 @@ from PyQt5.QtGui import QImage, QPixmap
 
 from algos.GraphCutMarker import GraphCutMarker
 from algos.ManualMarker import ManualMarker
+from algos.DeepGrabCutMarker import DeepGrabCutMarker
 
 
 class BallastCutterViewModel:
@@ -17,6 +16,7 @@ class BallastCutterViewModel:
         # algos
         self.gc_marker = GraphCutMarker()
         self.manual_marker = ManualMarker()
+        self.deepgc_marker = DeepGrabCutMarker()
 
         self.seed_num = self.gc_marker.foreground
 
@@ -45,6 +45,8 @@ class BallastCutterViewModel:
             self.manual_marker.reset_image(self.image.copy())
         elif "baseline" in self.currentAlgo:
             self.gc_marker.load_image(fn)
+        elif "deep" in self.currentAlgo:
+            self.deepgc_marker.reset_image(self.image.copy())
 
         self.partitions = np.zeros_like(self.image[:, :, 0], dtype=np.int32)
         self.labels = defaultdict(list)
@@ -61,13 +63,11 @@ class BallastCutterViewModel:
         label_aspectRatio = lw / lh
 
         if img_aspectRatio > label_aspectRatio:
-            offsetW = 0
             scale = lw / iw
             offsetH = (lh - ih * scale) // 2
         else:
             offsetH = 0
             scale = lh / ih
-            offsetW = (lw - iw * scale) // 2
 
         ix = (x - 0) / scale
         iy = (y - offsetH) / scale
@@ -129,6 +129,22 @@ class BallastCutterViewModel:
 
         return QPixmap.fromImage(self.get_qimage(self.manual_marker.get_seg_overlay()))
 
+    def deep_seed_mouse_down(self, event, labelRes):
+        ix, iy = self.remap_event(event, self.deepgc_marker.image, labelRes)
+        self.deepgc_marker.start_draw(ix, iy)
+
+    def deep_seed_mouse_drag(self, event, labelRes):
+        ix, iy = self.remap_event(event, self.deepgc_marker.image, labelRes)
+        self.deepgc_marker.add_seed(ix, iy)
+
+        return QPixmap.fromImage(self.get_qimage(self.deepgc_marker.get_candidate_overlay()))
+
+    def deep_seed_mouse_release(self, event, labelRes):
+        ix, iy = self.remap_event(event, self.deepgc_marker.image, labelRes)
+        self.deepgc_marker.end_draw(ix, iy)
+
+        return QPixmap.fromImage(self.get_qimage(self.deepgc_marker.get_candidate_overlay()))
+
     def preview_mouse_down(self, event, labelRes):
         ix, iy = self.remap_event(event, self.image, labelRes)
         self.selectStart = [iy, ix]
@@ -173,6 +189,10 @@ class BallastCutterViewModel:
             self.manual_marker.reset_image(self.image[starty : endy + 1, startx : endx + 1])
             seedPixmap = QPixmap.fromImage(self.get_qimage(self.manual_marker.get_seg_overlay()))
             segPixmap = QPixmap.fromImage(self.get_qimage(self.manual_marker.get_seg_overlay()))
+        elif "deep" in self.currentAlgo:
+            self.deepgc_marker.reset_image(self.image[starty : endy + 1, startx : endx + 1])
+            seedPixmap = QPixmap.fromImage(self.get_qimage(self.deepgc_marker.get_seg_overlay()))
+            segPixmap = QPixmap.fromImage(self.get_qimage(self.deepgc_marker.get_seg_overlay()))
 
         return seedPixmap, segPixmap
 
@@ -183,6 +203,13 @@ class BallastCutterViewModel:
         self.gc_marker.create_graph()
         return QPixmap.fromImage(self.get_qimage(self.gc_marker.get_image_with_overlay(self.gc_marker.segmented)))
 
+    def run_deepgc(self):
+        self.deepgc_marker.calculate()
+        return QPixmap.fromImage(self.get_qimage(self.deepgc_marker.get_seg_overlay()))
+
+    def export_mask(self, fn="results.txt"):
+        np.savetxt("results.txt", self.partitions, fmt="%d")
+
     def clear_seeds(self):
         seed_img = None
         if "baseline" in self.currentAlgo:
@@ -191,6 +218,10 @@ class BallastCutterViewModel:
         elif "manual" in self.currentAlgo:
             self.manual_marker.clear_seeds()
             seed_img = self.manual_marker.get_seg_overlay()
+        elif "deep" in self.currentAlgo:
+            self.deepgc_marker.clean_seeds()
+            seed_img = self.deepgc_marker.get_candidate_overlay()
+
         return QPixmap.fromImage(self.get_qimage(seed_img))
 
     @staticmethod
@@ -206,6 +237,9 @@ class BallastCutterViewModel:
 
         elif "manual" in self.currentAlgo:
             mask = self.manual_marker.mask[:, :, 0].astype(np.bool8)
+
+        elif "deep" in self.currentAlgo:
+            mask = self.deepgc_marker.get_mask().astype(np.bool8)
 
         annotation_id = len(list(self.labels.keys()))
         self.partitions[starty : endy + 1, startx : endx + 1][mask] = annotation_id + 1
